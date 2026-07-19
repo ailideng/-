@@ -20,9 +20,9 @@ export const DESIGN = {
 };
 
 const FACE_CARD_NAMES = {
-  J: 'JACK',
-  Q: 'QUEEN',
-  K: 'KING',
+  J: '侍从',
+  Q: '皇后',
+  K: '国王',
 };
 
 const PIP_MAP = {
@@ -83,10 +83,10 @@ export function drawTableBackground(ctx, width, height, tick) {
   ctx.fillRect(0, 0, width, height);
 
   ctx.save();
-  ctx.globalAlpha = 0.16;
+  ctx.globalAlpha = 0.18;
   ctx.strokeStyle = '#FFFFFF';
   ctx.lineWidth = 1;
-  for (let y = 10; y < height; y += 18) {
+  for (let y = 10; y < height; y += 14) {
     ctx.beginPath();
     ctx.moveTo(0, y + Math.sin((tick + y) * 0.002) * 4);
     ctx.bezierCurveTo(width * 0.28, y - 10, width * 0.72, y + 12, width, y);
@@ -95,13 +95,21 @@ export function drawTableBackground(ctx, width, height, tick) {
   ctx.restore();
 
   ctx.save();
-  ctx.globalAlpha = 0.1;
+  ctx.globalAlpha = 0.13;
   ctx.fillStyle = '#06110F';
-  for (let i = 0; i < 160; i++) {
+  for (let i = 0; i < 260; i++) {
     const x = (i * 97) % width;
     const y = (i * 53) % height;
-    ctx.fillRect(x, y, 1, 1);
+    ctx.fillRect(x, y, i % 3 === 0 ? 2 : 1, 1);
   }
+  ctx.restore();
+
+  ctx.save();
+  const vignette = ctx.createRadialGradient(width / 2, height / 2, height * 0.12, width / 2, height / 2, height * 0.62);
+  vignette.addColorStop(0, 'rgba(255,255,255,0)');
+  vignette.addColorStop(1, 'rgba(0,0,0,0.32)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
   ctx.restore();
 
   drawWoodRail(ctx, 0, 0, width, woodH, true);
@@ -251,13 +259,7 @@ function drawPips(ctx, rank, suit, color, x, y, width, height) {
   ctx.textBaseline = 'middle';
 
   if (faceName) {
-    ctx.font = `700 ${Math.floor(width * 0.38)}px serif`;
-    ctx.fillText(rank, x + width / 2, y + height * 0.47);
-    ctx.font = `${Math.floor(width * 0.24)}px serif`;
-    ctx.fillText(suit, x + width / 2, y + height * 0.62);
-    ctx.fillStyle = 'rgba(17, 23, 22, 0.32)';
-    ctx.font = `700 ${Math.floor(width * 0.1)}px sans-serif`;
-    ctx.fillText(faceName, x + width / 2, y + height * 0.74);
+    drawFacePortrait(ctx, rank, suit, color, x, y, width, height);
     return;
   }
 
@@ -272,19 +274,148 @@ function drawJoker(ctx, card, x, y, width, height) {
   const red = card.rank === '大王';
   const color = red ? DESIGN.ruby : DESIGN.blackSuit;
 
+  drawJokerFigure(ctx, red, x, y, width, height);
+
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `700 ${Math.floor(width * 0.18)}px sans-serif`;
-  ctx.fillText(card.rank, x + width / 2, y + height * 0.34);
-  ctx.font = `700 ${Math.floor(width * 0.13)}px serif`;
-  ctx.fillText('JOKER', x + width / 2, y + height * 0.52);
+  ctx.fillText(card.rank, x + width / 2, y + height * 0.26);
+  ctx.font = `700 ${Math.floor(width * 0.12)}px serif`;
+  ctx.fillText('JOKER', x + width / 2, y + height * 0.78);
 
   ctx.strokeStyle = red ? 'rgba(179, 38, 50, 0.55)' : 'rgba(17, 17, 17, 0.5)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(x + width / 2, y + height * 0.68, width * 0.15, 0, Math.PI * 2);
+  ctx.arc(x + width / 2, y + height * 0.52, width * 0.24, 0, Math.PI * 2);
   ctx.stroke();
+}
+
+function drawFacePortrait(ctx, rank, suit, color, x, y, width, height) {
+  const cx = x + width / 2;
+  const top = y + height * 0.25;
+  const personColor = rank === 'Q' ? DESIGN.ruby : (rank === 'K' ? DESIGN.brass : DESIGN.blueBack);
+  const trimColor = color;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(17, 23, 22, 0.24)';
+  ctx.lineWidth = Math.max(1, width * 0.018);
+  ctx.fillStyle = 'rgba(208, 168, 92, 0.12)';
+  roundRect(ctx, x + width * 0.24, y + height * 0.2, width * 0.52, height * 0.58, width * 0.08);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = personColor;
+  ctx.beginPath();
+  ctx.moveTo(cx, y + height * 0.38);
+  ctx.lineTo(x + width * 0.68, y + height * 0.68);
+  ctx.quadraticCurveTo(cx, y + height * 0.78, x + width * 0.32, y + height * 0.68);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#F0C9A4';
+  ctx.beginPath();
+  ctx.arc(cx, y + height * 0.42, width * 0.13, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = DESIGN.ink;
+  ctx.lineWidth = Math.max(1, width * 0.012);
+  ctx.beginPath();
+  ctx.arc(cx - width * 0.045, y + height * 0.41, width * 0.01, 0, Math.PI * 2);
+  ctx.arc(cx + width * 0.045, y + height * 0.41, width * 0.01, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - width * 0.04, y + height * 0.47);
+  ctx.quadraticCurveTo(cx, y + height * 0.5, cx + width * 0.04, y + height * 0.47);
+  ctx.stroke();
+
+  if (rank === 'K' || rank === 'Q') {
+    ctx.fillStyle = DESIGN.brass;
+    ctx.beginPath();
+    ctx.moveTo(cx - width * 0.16, top + height * 0.08);
+    ctx.lineTo(cx - width * 0.09, top);
+    ctx.lineTo(cx, top + height * 0.07);
+    ctx.lineTo(cx + width * 0.09, top);
+    ctx.lineTo(cx + width * 0.16, top + height * 0.08);
+    ctx.lineTo(cx + width * 0.12, top + height * 0.14);
+    ctx.lineTo(cx - width * 0.12, top + height * 0.14);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.fillStyle = DESIGN.blueBackDark;
+    ctx.beginPath();
+    ctx.moveTo(cx - width * 0.14, top + height * 0.11);
+    ctx.lineTo(cx, top);
+    ctx.lineTo(cx + width * 0.14, top + height * 0.11);
+    ctx.lineTo(cx + width * 0.08, top + height * 0.16);
+    ctx.lineTo(cx - width * 0.08, top + height * 0.16);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = trimColor;
+  ctx.lineWidth = Math.max(1, width * 0.025);
+  ctx.beginPath();
+  if (rank === 'Q') {
+    ctx.moveTo(x + width * 0.68, y + height * 0.3);
+    ctx.lineTo(x + width * 0.36, y + height * 0.72);
+  } else {
+    ctx.moveTo(x + width * 0.31, y + height * 0.28);
+    ctx.lineTo(x + width * 0.71, y + height * 0.72);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = trimColor;
+  ctx.font = `${Math.floor(width * 0.2)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(suit, cx, y + height * 0.62);
+
+  ctx.fillStyle = 'rgba(17, 23, 22, 0.38)';
+  ctx.font = `700 ${Math.floor(width * 0.085)}px sans-serif`;
+  ctx.fillText(FACE_CARD_NAMES[rank], cx, y + height * 0.73);
+  ctx.restore();
+}
+
+function drawJokerFigure(ctx, red, x, y, width, height) {
+  const cx = x + width / 2;
+  const cy = y + height * 0.52;
+  const accent = red ? DESIGN.ruby : DESIGN.blackSuit;
+
+  ctx.save();
+  ctx.fillStyle = '#F0C9A4';
+  ctx.beginPath();
+  ctx.arc(cx, cy, width * 0.13, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.moveTo(cx - width * 0.2, cy - height * 0.07);
+  ctx.lineTo(cx - width * 0.05, cy - height * 0.22);
+  ctx.lineTo(cx + width * 0.02, cy - height * 0.07);
+  ctx.lineTo(cx + width * 0.14, cy - height * 0.2);
+  ctx.lineTo(cx + width * 0.2, cy - height * 0.03);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = DESIGN.brass;
+  [cx - width * 0.05, cx + width * 0.14].forEach((bellX) => {
+    ctx.beginPath();
+    ctx.arc(bellX, cy - height * 0.2, width * 0.025, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.strokeStyle = DESIGN.ink;
+  ctx.lineWidth = Math.max(1, width * 0.01);
+  ctx.beginPath();
+  ctx.arc(cx - width * 0.04, cy - height * 0.01, width * 0.008, 0, Math.PI * 2);
+  ctx.arc(cx + width * 0.04, cy - height * 0.01, width * 0.008, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - width * 0.06, cy + height * 0.05);
+  ctx.quadraticCurveTo(cx, cy + height * 0.09, cx + width * 0.06, cy + height * 0.05);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawCardBack(ctx, x, y, width, height, radius) {

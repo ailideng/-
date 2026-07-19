@@ -33,6 +33,8 @@ export default class Main {
   constructor() {
     this.scene = 'menu';
     this.visibilityMode = 'hidden';
+    this.room = null;
+    this.localSeat = 0;
     this.engine = null;
     this.buttons = [];
     this.cardHits = [];
@@ -44,8 +46,12 @@ export default class Main {
     this.botTimer = null;
     this.pressedCardId = null;
     this.pressUntil = 0;
+    this.scoreFlashUntil = [0, 0];
     this.touchHandler = this.handleTouchStart.bind(this);
     this.loop = this.loop.bind(this);
+
+    this.setupShare();
+    this.handleLaunchQuery();
 
     if (wx.offTouchStart) {
       wx.offTouchStart(this.touchHandler);
@@ -66,8 +72,172 @@ export default class Main {
     this.scheduleBotMove();
   }
 
+  setupShare() {
+    if (wx.showShareMenu) {
+      wx.showShareMenu({ withShareTicket: true });
+    }
+
+    if (wx.onShow) {
+      wx.onShow((options) => {
+        this.handleRoomQuery(options && options.query);
+      });
+    }
+  }
+
+  handleLaunchQuery() {
+    if (!wx.getLaunchOptionsSync) {
+      return;
+    }
+
+    const options = wx.getLaunchOptionsSync();
+    this.handleRoomQuery(options && options.query);
+  }
+
+  handleRoomQuery(query) {
+    if (!query || !query.roomId) {
+      return;
+    }
+
+    this.joinRoom(query.roomId);
+  }
+
+  createRoom(mode) {
+    const roomId = this.createRoomId();
+    const isBot = mode === 'bot';
+
+    this.localSeat = 0;
+    this.room = {
+      id: roomId,
+      mode,
+      players: [
+        { id: 'host', name: '玩家A', ready: true, visibility: 'hidden' },
+        isBot
+          ? { id: 'bot', name: '机器人B', ready: true, visibility: 'hidden' }
+          : null,
+      ],
+      message: isBot ? '机器人已入座，请确认手牌可见性' : '等待好友通过邀请进入房间',
+    };
+    this.visibilityMode = 'hidden';
+    this.scene = 'room';
+    this.persistRoom();
+  }
+
+  joinRoom(roomId) {
+    const room = this.loadRoom(roomId) || {
+      id: roomId,
+      mode: 'local',
+      players: [
+        { id: 'host', name: '玩家A', ready: true, visibility: 'hidden' },
+        null,
+      ],
+      message: '已通过邀请进入房间',
+    };
+
+    room.players[1] = room.players[1] || {
+      id: `guest-${Date.now()}`,
+      name: '玩家B',
+      ready: true,
+      visibility: 'hidden',
+    };
+    room.message = '两名玩家已入座，请协商手牌可见性';
+    this.localSeat = 1;
+    this.room = room;
+    this.visibilityMode = room.players[1].visibility || 'hidden';
+    this.scene = 'room';
+    this.persistRoom();
+  }
+
+  createRoomId() {
+    return `KF${Date.now().toString(36).slice(-5).toUpperCase()}${Math.floor(Math.random() * 900 + 100)}`;
+  }
+
+  persistRoom() {
+    if (!this.room || !wx.setStorageSync) {
+      return;
+    }
+
+    try {
+      wx.setStorageSync(`room:${this.room.id}`, this.room);
+    } catch (error) {
+      this.room.message = '房间状态仅保存在当前会话';
+    }
+  }
+
+  loadRoom(roomId) {
+    if (!wx.getStorageSync) {
+      return null;
+    }
+
+    try {
+      return wx.getStorageSync(`room:${roomId}`);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  inviteFriend() {
+    if (!this.room) {
+      return;
+    }
+
+    const query = `roomId=${this.room.id}`;
+
+    if (wx.shareAppMessage) {
+      wx.shareAppMessage({
+        title: `加入开火车房间 ${this.room.id}`,
+        query,
+      });
+      this.room.message = `已生成邀请：${this.room.id}`;
+    } else {
+      this.room.message = `分享参数：${query}`;
+    }
+  }
+
+  setRoomVisibility(seat, mode) {
+    if (!this.room || !this.room.players[seat]) {
+      return;
+    }
+
+    this.room.players[seat].visibility = mode;
+    this.visibilityMode = mode;
+    this.room.message = this.canStartRoom()
+      ? '双方设置一致，可以开始游戏'
+      : '请双方协商选择相同的手牌可见模式';
+
+    if (this.room.mode === 'bot' && seat === 0 && this.room.players[1]) {
+      this.room.players[1].visibility = mode;
+      this.room.message = '机器人已同步你的手牌可见性';
+    }
+
+    this.persistRoom();
+  }
+
+  canStartRoom() {
+    if (!this.room || !this.room.players[0] || !this.room.players[1]) {
+      return false;
+    }
+
+    return this.room.players[0].visibility === this.room.players[1].visibility;
+  }
+
+  startRoomGame() {
+    if (!this.canStartRoom()) {
+      if (this.room) {
+        this.room.message = this.room.players[1]
+          ? '请双方协商选择相同的手牌可见模式'
+          : '至少 2 人入座后才能开始';
+      }
+      return;
+    }
+
+    this.visibilityMode = this.room.players[0].visibility;
+    this.startGame(this.room.mode === 'bot' ? 'bot' : 'local');
+  }
+
   restart() {
     this.scene = 'menu';
+    this.room = null;
+    this.localSeat = 0;
     this.engine = null;
     this.buttons = [];
     this.cardHits = [];
@@ -216,6 +386,7 @@ export default class Main {
     });
 
     if (hasCapture) {
+      this.scoreFlashUntil[playerIndex] = startedAt + 980;
       const pile = this.scorePileRects[playerIndex] || this.getScorePileRect(playerIndex);
       const cards = result.capture.cards.map((card, index) => ({
         card,
@@ -287,6 +458,11 @@ export default class Main {
       return;
     }
 
+    if (this.scene === 'room') {
+      this.drawRoom();
+      return;
+    }
+
     this.drawGame(tick);
     this.drawAnimations(tick);
 
@@ -316,17 +492,15 @@ export default class Main {
     ctx.fillText('双人回合制扑克收牌对战', panelX + 28, panelY + 78);
 
     this.drawSampleCards(panelX + 34, panelY + 120);
-    this.drawVisibilityToggle(panelX + 24, panelY + 240, panelW - 48);
-
     this.drawButton({
       x: panelX + 24,
       y: panelY + panelH - 148,
       w: panelW - 48,
       h: 58,
       label: '匹配 / 人机对战',
-      subLabel: '先进入机器人练习，后续接入在线匹配',
+      subLabel: '进入准备房间，机器人自动同步设置',
       primary: true,
-      onTap: () => this.startGame('bot'),
+      onTap: () => this.createRoom('bot'),
     });
 
     this.drawButton({
@@ -335,9 +509,9 @@ export default class Main {
       w: panelW - 48,
       h: 58,
       label: '创建房间',
-      subLabel: '本机双人轮流点击，后续接邀请好友',
+      subLabel: '生成房间 ID，并邀请微信好友入座',
       primary: false,
-      onTap: () => this.startGame('local'),
+      onTap: () => this.createRoom('local'),
     });
   }
 
@@ -367,42 +541,125 @@ export default class Main {
     );
   }
 
-  drawVisibilityToggle(x, y, width) {
-    drawGlassPanel(ctx, x, y, width, 76, 18, false);
-    drawIcon(ctx, 'eye', x + 16, y + 21, 32, DESIGN.brass);
+  drawRoom() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const x = 20;
+    const y = 82;
+    const w = width - 40;
+    const h = Math.min(610, height - 112);
+    const canStart = this.canStartRoom();
+
+    drawGlassPanel(ctx, x, y, w, h, 24, true);
+
+    ctx.fillStyle = DESIGN.paper;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '700 28px serif';
+    ctx.fillText('房间等待中', x + 22, y + 22);
+
+    ctx.fillStyle = DESIGN.brass;
+    ctx.font = '700 13px sans-serif';
+    ctx.fillText(`房间 ID ${this.room.id}`, x + 24, y + 62);
+
+    this.drawPlayerSeat(0, x + 22, y + 104, w - 44);
+    this.drawPlayerSeat(1, x + 22, y + 188, w - 44);
+    this.drawRoomVisibilityChoices(x + 22, y + 286, w - 44);
+
+    ctx.fillStyle = canStart ? 'rgba(40, 180, 135, 0.86)' : 'rgba(252, 250, 244, 0.64)';
+    ctx.textAlign = 'left';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(
+      canStart ? '双方设置一致，可以开始游戏' : (this.room.players[1] ? '请双方协商选择相同的手牌可见模式' : '至少 2 人入座后才能开始'),
+      x + 24,
+      y + h - 164,
+    );
+
+    this.drawButton({
+      x: x + 22,
+      y: y + h - 136,
+      w: w - 44,
+      h: 54,
+      label: '邀请好友',
+      subLabel: '调用微信分享，携带当前房间 ID',
+      primary: false,
+      onTap: () => this.inviteFriend(),
+    });
+
+    this.drawButton({
+      x: x + 22,
+      y: y + h - 72,
+      w: w - 44,
+      h: 54,
+      label: canStart ? '开始游戏' : '等待确认',
+      subLabel: canStart ? '进入当前房间牌局' : '两人入座且选择一致后可开始',
+      primary: canStart,
+      disabled: !canStart,
+      onTap: () => this.startRoomGame(),
+    });
+  }
+
+  drawPlayerSeat(seat, x, y, width) {
+    const player = this.room.players[seat];
+    drawGlassPanel(ctx, x, y, width, 68, 16, !!player);
+
+    ctx.fillStyle = player ? DESIGN.paper : 'rgba(252, 250, 244, 0.54)';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '700 15px sans-serif';
+    ctx.fillText(player ? player.name : '等待好友入座', x + 16, y + 12);
+
+    ctx.fillStyle = 'rgba(252, 250, 244, 0.62)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(player ? (seat === this.localSeat ? '当前设备' : '已入座') : '通过分享卡片进入同一房间', x + 16, y + 38);
+
+    ctx.fillStyle = player && player.visibility === 'revealed' ? DESIGN.jade : DESIGN.brass;
+    ctx.textAlign = 'right';
+    ctx.font = '700 13px sans-serif';
+    ctx.fillText(player ? (player.visibility === 'revealed' ? '明牌' : '暗牌') : '--', x + width - 16, y + 24);
+  }
+
+  drawRoomVisibilityChoices(x, y, width) {
+    drawGlassPanel(ctx, x, y, width, 102, 18, false);
+    drawIcon(ctx, 'eye', x + 16, y + 17, 30, DESIGN.brass);
 
     ctx.fillStyle = DESIGN.paper;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.font = '700 15px sans-serif';
-    ctx.fillText('手牌可见性', x + 58, y + 14);
+    ctx.fillText('手牌可见性', x + 56, y + 14);
 
-    ctx.fillStyle = 'rgba(252, 250, 244, 0.68)';
+    ctx.fillStyle = 'rgba(252, 250, 244, 0.62)';
     ctx.font = '12px sans-serif';
-    ctx.fillText(this.visibilityMode === 'hidden' ? '暗牌：仅当前视角可见手牌' : '明牌：双方手牌全程可见', x + 58, y + 40);
+    ctx.fillText('双方选择一致时才能开始', x + 56, y + 38);
 
-    const switchRect = { x: x + width - 84, y: y + 22, w: 58, h: 30 };
-    ctx.fillStyle = this.visibilityMode === 'revealed' ? DESIGN.jade : 'rgba(0, 0, 0, 0.32)';
-    roundRect(ctx, switchRect.x, switchRect.y, switchRect.w, switchRect.h, 15);
-    ctx.fill();
-
-    ctx.fillStyle = DESIGN.paper;
-    ctx.beginPath();
-    ctx.arc(
-      switchRect.x + (this.visibilityMode === 'revealed' ? 42 : 16),
-      switchRect.y + 15,
-      11,
-      0,
-      Math.PI * 2,
-    );
-    ctx.fill();
-
-    this.buttons.push({
-      ...switchRect,
-      onTap: () => {
-        this.visibilityMode = this.visibilityMode === 'hidden' ? 'revealed' : 'hidden';
-      },
+    this.drawChoicePill(x + 56, y + 64, 86, '暗牌', this.room.players[this.localSeat] && this.room.players[this.localSeat].visibility === 'hidden', () => {
+      this.setRoomVisibility(this.localSeat, 'hidden');
     });
+    this.drawChoicePill(x + 152, y + 64, 86, '明牌', this.room.players[this.localSeat] && this.room.players[this.localSeat].visibility === 'revealed', () => {
+      this.setRoomVisibility(this.localSeat, 'revealed');
+    });
+
+    if (this.room.mode === 'local' && this.room.players[1]) {
+      this.drawChoicePill(x + width - 190, y + 64, 86, 'B暗牌', this.room.players[1].visibility === 'hidden', () => {
+        this.setRoomVisibility(1, 'hidden');
+      });
+      this.drawChoicePill(x + width - 96, y + 64, 86, 'B明牌', this.room.players[1].visibility === 'revealed', () => {
+        this.setRoomVisibility(1, 'revealed');
+      });
+    }
+  }
+
+  drawChoicePill(x, y, width, label, active, onTap) {
+    ctx.fillStyle = active ? DESIGN.jade : 'rgba(0, 0, 0, 0.28)';
+    roundRect(ctx, x, y, width, 28, 14);
+    ctx.fill();
+    ctx.fillStyle = DESIGN.paper;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '700 12px sans-serif';
+    ctx.fillText(label, x + width / 2, y + 14);
+    this.buttons.push({ x, y, w: width, h: 28, onTap });
   }
 
   drawGame(tick) {
@@ -417,9 +674,9 @@ export default class Main {
   getAreas() {
     const width = canvas.width;
     const height = canvas.height;
-    const bottomH = 192;
-    const topH = 120;
-    const trainY = 222;
+    const bottomH = 228;
+    const topH = 152;
+    const trainY = 258;
     const trainH = Math.max(190, height - bottomH - trainY - 12);
 
     return {
@@ -487,6 +744,7 @@ export default class Main {
     ctx.font = '11px sans-serif';
     ctx.fillText(`出牌 ${player.playCount} · 赢牌 ${player.won.length}`, area.x + 14, area.y + 34);
 
+    this.drawScoreFormulaPanel(playerIndex, area, tick);
     this.drawScorePile(playerIndex, pile);
 
     player.hand.forEach((card, index) => {
@@ -535,6 +793,38 @@ export default class Main {
     ctx.textBaseline = 'middle';
     ctx.font = '700 11px sans-serif';
     ctx.fillText(`${this.engine.players[playerIndex].won.length}`, pile.x + pile.w / 2, pile.y + pile.h + 12);
+  }
+
+  drawScoreFormulaPanel(playerIndex, area, tick) {
+    const player = this.engine.players[playerIndex];
+    const last = player.captures[player.captures.length - 1];
+    const x = last ? last.cardCount : 0;
+    const y = last ? last.playNumber : 0;
+    const baseScore = x * y;
+    const roundScore = last ? last.roundScore : 0;
+    const flash = tick < this.scoreFlashUntil[playerIndex];
+    const panelW = 164;
+    const panelX = playerIndex === 1 ? area.x + area.w - panelW - 14 : area.x + 14;
+    const panelY = area.y + 54;
+    const panelH = playerIndex === 0 ? 52 : 46;
+
+    ctx.save();
+    ctx.shadowColor = flash ? 'rgba(40, 180, 135, 0.72)' : 'rgba(0, 0, 0, 0.22)';
+    ctx.shadowBlur = flash ? 16 : 8;
+    ctx.fillStyle = flash ? 'rgba(40, 180, 135, 0.28)' : 'rgba(0, 0, 0, 0.24)';
+    roundRect(ctx, panelX, panelY, panelW, panelH, 14);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = flash ? '#8CF5C6' : DESIGN.paper;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '700 12px sans-serif';
+    ctx.fillText(`本轮收牌：${x}张 × 第${y}手 = ${baseScore}分${last && last.multiplier === 2 ? ' ×2!' : ''}`, panelX + 12, panelY + 9);
+
+    ctx.fillStyle = 'rgba(252, 250, 244, 0.68)';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(`本轮得分 ${roundScore} · 累积总分 ${this.engine.getPlayerTotal(playerIndex)}`, panelX + 12, panelY + 29);
   }
 
   drawTrainArea(area) {
@@ -712,7 +1002,7 @@ export default class Main {
     ctx.fillText(`${score}`, x + width - 14, y + 24);
   }
 
-  drawButton({ x, y, w, h, label, subLabel, primary, onTap }) {
+  drawButton({ x, y, w, h, label, subLabel, primary, disabled, onTap }) {
     ctx.save();
     ctx.shadowColor = primary ? 'rgba(208, 168, 92, 0.38)' : 'rgba(0, 0, 0, 0.24)';
     ctx.shadowBlur = 16;
@@ -730,7 +1020,13 @@ export default class Main {
     roundRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 16);
     ctx.stroke();
 
-    ctx.fillStyle = primary ? DESIGN.paper : DESIGN.ink;
+    if (disabled) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+      roundRect(ctx, x, y, w, h, 16);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = primary ? DESIGN.paper : (disabled ? 'rgba(252, 250, 244, 0.62)' : DESIGN.ink);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.font = '700 16px sans-serif';
@@ -744,7 +1040,9 @@ export default class Main {
     ctx.textBaseline = 'middle';
     ctx.font = '700 22px sans-serif';
     ctx.fillText('›', x + w - 18, y + h / 2);
-    this.buttons.push({ x, y, w, h, onTap });
+    if (!disabled) {
+      this.buttons.push({ x, y, w, h, onTap });
+    }
   }
 
   getHandLayout(playerIndex) {
@@ -752,14 +1050,14 @@ export default class Main {
     const area = playerIndex === 0 ? areas.player : areas.opponent;
     const player = this.engine.players[playerIndex];
     const compact = playerIndex === 1;
-    const cardW = compact ? 44 : 56;
-    const cardH = compact ? 64 : 82;
+    const cardW = compact ? 36 : 56;
+    const cardH = compact ? 52 : 82;
     const count = player.hand.length;
-    const usableW = area.w - 96;
-    const step = count > 1 ? Math.min(cardW * 0.72, usableW / (count - 1)) : 0;
+    const usableW = area.w - 160;
+    const step = count > 1 ? Math.min(cardW * 0.68, usableW / (count - 1)) : 0;
     const totalW = cardW + step * Math.max(0, count - 1);
-    const startX = area.x + (area.w - totalW) / 2 - (compact ? 4 : 0);
-    const baseY = compact ? area.y + 48 : area.y + 60;
+    const startX = compact ? area.x + 18 : area.x + area.w - totalW - 18;
+    const baseY = compact ? area.y + 92 : area.y + 128;
     const angleStep = count > 1 ? Math.min(0.085, 0.36 / (count - 1)) : 0;
     const center = (count - 1) / 2;
 
@@ -824,7 +1122,7 @@ export default class Main {
     const area = playerIndex === 0 ? areas.player : areas.opponent;
     return {
       x: area.x + area.w - 68,
-      y: area.y + (playerIndex === 0 ? 52 : 44),
+      y: area.y + (playerIndex === 0 ? 80 : 70),
       w: playerIndex === 0 ? 44 : 36,
       h: playerIndex === 0 ? 62 : 52,
     };
